@@ -1,6 +1,9 @@
 #ifndef LLOPEN_H
 #define LLOPEN_H
 
-int llopen(int port);
+#define TRANSMITTER 0
+#define RECEIVER 1
+
+int llopen(int port, int flag);
 
 #endif

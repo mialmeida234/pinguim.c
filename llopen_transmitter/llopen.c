@@ -9,7 +9,7 @@
 #include "llopen.h"
 
 
-int llopen(int port) {
+int llopen(int port, int flag) {
     int fd;
     struct termios newtio;
 
@@ -32,45 +32,87 @@ int llopen(int port) {
     newtio.c_iflag = IGNPAR;
     newtio.c_oflag = 0;
     newtio.c_lflag = 0;
-    newtio.c_cc[VTIME] = 1;
-    newtio.c_cc[VMIN] = 0;
+    newtio.c_cc[VTIME] = 0;
+    newtio.c_cc[VMIN] = 1;
     tcflush(fd, TCIFLUSH);
     tcsetattr(fd, TCSANOW, &newtio);
 
-    // Send SET frame to receiver
-    //char set_frame[5] = {0x07, 0x03, 0x0F, 0x00, 0x0F}; // SET frame
-    char set_frame[]="SET";
-    int bytes_written = write(fd, set_frame, 3);
-    
-    if (bytes_written != 3) {
-        printf("Error writing SET frame\n");
-        close(fd);
-        return -1;
-    }
-    printf("Wrote %d bytes\n", bytes_written);
+    if (flag == TRANSMITTER) {
+        // Send SET frame to receiver
+        char set_frame[] = "SET";
+        int bytes_written = write(fd, set_frame, 3);
 
-    // Wait for response from receiver
-    char buf[1];
-    int bytes_read = 0;
-    while (bytes_read < 5) {
-        int n = read(fd, buf, 1);
-        if (n == -1) {
-            printf("Error reading from serial port\n");
+        if (bytes_written != 3) {
+            printf("Error writing SET frame\n");
             close(fd);
             return -1;
-        } else if (n == 0) {
-            continue;
-        } else {
-            bytes_read += n;
         }
-    }
-    if (buf[0] != 0x07) {
-        printf("Invalid response received\n");
-        close(fd);
+        printf("Wrote %d bytes\n", bytes_written);
+
+        // Wait for response from receiver
+        char buf[1];
+        int bytes_read = 0;
+        while (bytes_read < 5) {
+            int n = read(fd, buf, 1);
+            if (n == -1) {
+                printf("Error reading from serial port\n");
+                close(fd);
+                return -1;
+            } else if (n == 0) {
+                continue;
+            } else {
+                bytes_read += n;
+            }
+        }
+        if (buf[0] != 0x07) {
+            printf("Invalid response received\n");
+            close(fd);
+            return -1;
+        }
+
+        printf("Connection established\n");
+
+        return fd;
+
+    } else if (flag == RECEIVER) {
+        // Wait for SET frame from transmitter
+        char buf[3];
+        int bytes_read = 0;
+        while (bytes_read < 3) {
+            int n = read(fd, &buf[bytes_read], 1);
+            if (n == -1) {
+                printf("Error reading from serial port\n");
+                close(fd);
+                return -1;
+            } else if (n == 0) {
+                continue;
+            } else {
+                bytes_read += n;
+            }
+        }
+        if (strcmp(buf, "SET") != 0) {
+            printf("Invalid SET frame received\n");
+            close(fd);
+            return -1;
+        }
+
+        // Send UA frame to transmitter
+        char ua_frame[] = "UA";
+        int bytes_written = write(fd, ua_frame, 3);
+
+        if (bytes_written != 3) {
+            printf("Error writing UA frame\n");
+            close(fd);
+            return -1;
+        }
+        printf("Wrote %d bytes\n", bytes_written);
+
+        printf("Connection established\n");
+
+        return fd;
+
+    } else {
+        printf("Invalid flag value\n");
         return -1;
     }
-
-    printf("Connection established\n");
-
-    return fd;
 }

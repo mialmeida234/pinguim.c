@@ -1,0 +1,2 @@
+Comando:
+gcc -o test_llopen test_llopen.c llopen.c -Wall

@@ -1,3 +1,14 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <termios.h>
+#include <string.h>
+#include "llwrite.h"
+
+
+
+
 int main() {
     // Open the serial port
     int fd = open("/dev/ttyS0", O_WRONLY);

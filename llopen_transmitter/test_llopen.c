@@ -13,7 +13,7 @@ int main(int argc, char *argv[]) {
     if (strcmp(argv[1], "TRANSMITTER") == 0) {
         fd = llopen(1, TRANSMITTER);
     } else if (strcmp(argv[1], "RECEIVER") == 0) {
-        fd = llopen(1, RECEIVER);
+        fd = llopen(2, RECEIVER);
     } else {
         printf("Invalid argument: %s\n", argv[1]);
         return -1;

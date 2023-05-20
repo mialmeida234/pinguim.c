@@ -8,6 +8,9 @@
 #include <string.h>
 #include "llopen.h"
 
+#define MAX_TRANSMISSIONS 3
+#define TIMEOUT_SECONDS 3
+
 int llopen(int port, int flag) {
     int fd;
     struct termios newtio;
@@ -36,56 +39,62 @@ int llopen(int port, int flag) {
     tcflush(fd, TCIFLUSH);
     tcsetattr(fd, TCSANOW, &newtio);
 
-    if (flag == TRANSMITTER) {
-        // Send SET frame to receiver
-        unsigned char set_frame[] = { 0x5A, 0x01, 0x83, 0x4A }; // 0101101000000001000000110000001001011010
-        int bytes_written = write(fd, set_frame, sizeof(set_frame));
+     if (flag == TRANSMITTER) {
+        int transmissions = 0;
+        int ua_received = 0;
+        int timer_expired = 0;
 
-        if (bytes_written != sizeof(set_frame)) {
-            printf("Error writing SET frame\n");
+        while (transmissions < MAX_TRANSMISSIONS && !ua_received && !timer_expired) {
+            // Send SET frame to receiver
+            unsigned char set_frame[] = { 0x5A, 0x01, 0x83, 0x4A };
+            int bytes_written = write(fd, set_frame, sizeof(set_frame));
+
+            if (bytes_written != sizeof(set_frame)) {
+                printf("Error writing SET frame\n");
+                close(fd);
+                return -1;
+            }
+            printf("Wrote %d bits\n", bytes_written * 8);
+
+            // Start the timer
+            alarm(TIMEOUT_SECONDS);
+
+            // Wait for response from receiver
+            unsigned char expected_ua_frame[] = { 0x9A, 0x0C, 0x71, 0x4A };
+            unsigned char received_frame[4];
+            int bytes_read = 0;
+
+            while (bytes_read < sizeof(expected_ua_frame)) {
+                int n = read(fd, &received_frame[bytes_read], sizeof(received_frame) - bytes_read);
+                if (n == -1) {
+                    printf("Error reading from serial port\n");
+                    close(fd);
+                    return -1;
+                } else if (n == 0) {
+                    continue;
+                } else {
+                    bytes_read += n;
+                }
+            }
+
+            // Check if UA frame received
+            if (memcmp(received_frame, expected_ua_frame, sizeof(expected_ua_frame)) == 0) {
+                ua_received = 1;
+            }
+
+            // Stop the timer
+            alarm(0);
+
+            transmissions++;
+        }
+
+        if (ua_received) {
+            printf("Connection established\n");
+        } else {
+            printf("Maximum transmissions reached or UA frame not received\n");
             close(fd);
             return -1;
         }
-        printf("Wrote %d bits\n", bytes_written * 8);
-
-        // Wait for response from receiver
-        unsigned char expected_ua_frame[] = { 0x9A, 0x0C, 0x71, 0x4A }; // 0101101000000011000001110000010001011010
-        unsigned char received_frame[4];
-        int bits_read = 0;
-        int bytes_read = 0;
-
-        while (bytes_read < sizeof(expected_ua_frame)) {
-            int n = read(fd, &received_frame[bytes_read], sizeof(received_frame) - bytes_read);
-            if (n == -1) {
-                printf("Error reading from serial port\n");
-                close(fd);
-                return -1;
-            } else if (n == 0) {
-                continue;
-            } else {
-                bytes_read += n;
-            }
-        }
-
-        for (int i = 0; i < bytes_read; i++) {
-            unsigned char expected_byte = expected_ua_frame[i];
-            unsigned char received_byte = received_frame[i];
-
-            for (int j = 0; j < 8; j++) {
-                unsigned char expected_bit = (expected_byte >> (7 - j)) & 0x01;
-                unsigned char received_bit = (received_byte >> (7 - j)) & 0x01;
-
-                if (received_bit != expected_bit) {
-                    printf("Invalid UA frame received\n");
-                    close(fd);
-                    return -1;
-                }
-
-                bits_read++;
-            }
-        }
-
-        printf("Connection established\n");
 
         // Return the data connection ID
         return fd;
@@ -138,8 +147,6 @@ int llopen(int port, int flag) {
         }
         printf("Wrote %d bits\n", bits_written * 8);
 
-        printf("Connection established\n");
-
         // Return the data connection ID
         return fd;
     } else {
@@ -147,3 +154,4 @@ int llopen(int port, int flag) {
         return -1;
     }
 }
+

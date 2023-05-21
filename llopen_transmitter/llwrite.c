@@ -1,81 +1,83 @@
 #include <stdio.h>
-#include <stdlib.h>
 #include <unistd.h>
-#include <fcntl.h>
-#include <termios.h>
-#include <string.h>
-#include "headers.h"
 
-#define MAX_SIZE 255
-#define FALSE 0
-#define TRUE 1
+int llwrite(int fd, char* buffer, int length) {
+    // Generate the sequence number (S) based on the number of frames sent
+    static unsigned int sequenceNumber = 0;
+    unsigned char controlField = sequenceNumber << 1; // Shift the sequence number left by 1
 
-#define BAUDRATE B38400
-#define FLAG 0x7E
-#define A 0x03
-#define C_SET 0x03
-#define C_DISC 0x0B
-#define C_UA 0x07
-#define C 0x00 // assuming we are sending an information frame
+    // Prepare the frame
+    unsigned char frame[4 + length + 4];
+    frame[0] = 0x05C;
+    frame[1] = 0x01;
+    frame[2] = controlField;
+    frame[3] = frame[0] ^ frame[1] ^ frame[2]; // Calculate the XOR checksum
 
+    // Copy the buffer into the frame
+    for (int i = 0; i < length; i++) {
+        frame[4 + i] = buffer[i];
+    }
 
+    // Calculate the XOR checksum for the buffer
+    unsigned char bufferChecksum = 0;
+    for (int i = 0; i < length; i++) {
+        bufferChecksum ^= buffer[i];
+    }
 
-int fd;  // data link identifier
+    // Add the buffer checksum and end of frame marker to the frame
+    frame[4 + length] = bufferChecksum ^ controlField; // XOR checksum with control field
+    frame[4 + length + 1] = frame[0];
 
-int set_termios(int fd, struct termios *oldtio) {
-    struct termios newtio;
+    // Send the frame to the data link
+    int bytes_written = write(fd, frame, sizeof(frame));
 
-    if (tcgetattr(fd, oldtio) == -1) { /* save current port settings */
-        perror("tcgetattr");
+    if (bytes_written == -1) {
+        printf("Error writing to data link\n");
         return -1;
     }
 
-    bzero(&newtio, sizeof(newtio));
-    newtio.c_cflag = BAUDRATE | CS8 | CLOCAL | CREAD;
-    newtio.c_iflag = IGNPAR;
-    newtio.c_oflag = 0;
+    // Start the timer
 
-    /* set input mode (non-canonical, no echo,...) */
-    newtio.c_lflag = 0;
+    // Wait for the acknowledgment (ACK) or timeout
+    int ack_received = 0;
+    int retransmission_count = 0;
 
-    newtio.c_cc[VTIME] = 0; /* inter-character timer unused */
-    newtio.c_cc[VMIN] = 1;  /* blocking read until 1 char received */
+    while (!ack_received && retransmission_count < 3) {
+        // Receive the ACK frame
+        unsigned char received_frame[4];
+        int bytes_read = read(fd, received_frame, sizeof(received_frame));
 
-    tcflush(fd, TCIOFLUSH);
+        if (bytes_read == -1) {
+            printf("Error reading from data link\n");
+            return -1;
+        } else if (bytes_read == 0) {
+            // Timeout occurred, retransmit the frame
+            bytes_written = write(fd, frame, sizeof(frame));
+            retransmission_count++;
+        } else {
+            // ACK frame received, check the type
+            if (received_frame[2] == controlField) {
+                if (received_frame[3] == frame[0] ^ frame[1] ^ frame[2]) {
+                    // RR (Receiver Ready) ACK received
+                    ack_received = 1;
+                } else {
+                    // REJ (Reject) ACK received, handle failure/error
+                    printf("REJ ACK received\n");
+                    return -1;
+                }
+            }
+        }
+    }
 
-    if (tcsetattr(fd, TCSANOW, &newtio) == -1) {
-        perror("tcsetattr");
+    if (!ack_received) {
+        printf("Maximum retransmission attempts reached\n");
         return -1;
     }
 
-    printf("New termios structure set\n");
+    // Stop the timer
 
-    return 0;
-}
+    // Increment the sequence number for the next frame
+    sequenceNumber = (sequenceNumber + 1) % 2; // Assuming S can only be 0 or 1
 
-int llwrite(int fd, char *buffer, int length) {
-    int res;
-    int i;
-    char frame[MAX_SIZE];
-
-    // Build the frame
-    frame[0] = FLAG;
-    frame[1] = A;
-    frame[2] = C;
-    for (i = 0; i < length; i++)
-        frame[3 + i] = buffer[i];
-
-    // Compute the BCC
-    char bcc = buffer[0];
-    for (i = 1; i < length; i++)
-        bcc ^= buffer[i];
-    frame[3 + length] = bcc;
-
-    // Add the final flag
-    frame[4 + length] = FLAG;
-
-    // Write the frame
-    res = write(fd, frame, length + 5);
-
-    return res;
+    return bytes_written - 8; // Exclude the frame delimiters and checksums from the return value
 }

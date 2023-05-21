@@ -1,2 +1,2 @@
 #!/usr/bin/env bash
-gcc -w cable.c -o cable
+gcc -w main.c ../protocol/*.o -o main

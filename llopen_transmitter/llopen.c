@@ -6,7 +6,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
-#include "headers.h"
+#include "llopen.h"
 
 #define MAX_TRANSMISSIONS 3
 #define TIMEOUT_SECONDS 3
@@ -30,7 +30,7 @@ int llopen(int port, int flag) {
 
     // Configure the serial port settings
     memset(&newtio, 0, sizeof(newtio));
-    newtio.c_cflag = B19200 | CS8 | CLOCAL | CREAD;
+    newtio.c_cflag = B9600| CS8 | CLOCAL | CREAD;
     newtio.c_iflag = IGNPAR;
     newtio.c_oflag = 0;
     newtio.c_lflag = 0;
@@ -46,7 +46,7 @@ int llopen(int port, int flag) {
 
         while (transmissions < MAX_TRANSMISSIONS && !ua_received && !timer_expired) {
             // Send SET frame to receiver
-            unsigned char set_frame[] = { 0x5A, 0x01, 0x83, 0x4A };
+            unsigned char set_frame[] = { 0x5C, 0x01, 0x03, 0x02, 0x5C };
             int bytes_written = write(fd, set_frame, sizeof(set_frame));
 
             if (bytes_written != sizeof(set_frame)) {
@@ -55,13 +55,14 @@ int llopen(int port, int flag) {
                 return -1;
             }
             printf("Wrote %d bits\n", bytes_written * 8);
+            printf("SET frame sent\n");
 
             // Start the timer
             alarm(TIMEOUT_SECONDS);
 
             // Wait for response from receiver
-            unsigned char expected_ua_frame[] = { 0x9A, 0x0C, 0x71, 0x4A };
-            unsigned char received_frame[4];
+            unsigned char expected_ua_frame[] = { 0x5C, 0x03, 0x07, 0x04, 0x5C };
+            unsigned char received_frame[5];
             int bytes_read = 0;
 
             while (bytes_read < sizeof(expected_ua_frame)) {
@@ -100,8 +101,8 @@ int llopen(int port, int flag) {
         return fd;
     } else if (flag == RECEIVER) {
         // Wait for SET frame from transmitter
-        unsigned char expected_set_frame[] = { 0x5A, 0x01, 0x83, 0x4A }; // 0101101000000001000000110000001001011010
-        unsigned char received_frame[4];
+        unsigned char expected_set_frame[] = { 0x5C, 0x01, 0x03, 0x02, 0x5C }; // 0101101000000001000000110000001001011010
+        unsigned char received_frame[5];
         int bits_read = 0;
         int bytes_read = 0;
 
@@ -137,7 +138,7 @@ int llopen(int port, int flag) {
         }
 
         // Send UA frame to transmitter
-        unsigned char ua_frame[] = { 0x9A, 0x0C, 0x71, 0x4A }; // 0101101000000011000001110000010001011010
+        unsigned char ua_frame[] = { 0x5C, 0x03, 0x07, 0x04, 0x5C }; // 0101101000000011000001110000010001011010
         int bits_written = write(fd, ua_frame, sizeof(ua_frame));
 
         if (bits_written != sizeof(ua_frame)) {
@@ -146,6 +147,7 @@ int llopen(int port, int flag) {
             return -1;
         }
         printf("Wrote %d bits\n", bits_written * 8);
+        printf("UA frame sent\n");
 
         // Return the data connection ID
         return fd;
@@ -154,4 +156,5 @@ int llopen(int port, int flag) {
         return -1;
     }
 }
+
 

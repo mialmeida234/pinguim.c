@@ -8,28 +8,79 @@
 #include <stdlib.h>
 #include "headers.h"
 
+
 #define BAUDRATE B38400
 #define FLAG 0x7E
 #define ESCAPE 0x7D
 #define XON 0x11
 #define XOFF 0x13
 
-unsigned char calculateBCC2(unsigned char *data, int length) {
-    unsigned char bcc2 = 0;
-    for (int i = 0; i < length; i++) {
-        bcc2 ^= data[i];
+int llread(int fd, char *buffer) {
+    unsigned char frame[255]; // Maximum possible size for frame
+    int frameLength = 0;
+    unsigned char receivedBCC2;
+
+    // Read the frame from the serial port
+    while (1) {
+        unsigned char receivedChar;
+        int res = read(fd, &receivedChar, 1);
+        if (res < 0) {
+            perror("Error reading from serial port");
+            return -1;
+        }
+
+        // Check for start flag
+        if (receivedChar == FLAG && frameLength == 0) {
+            frame[frameLength++] = receivedChar;
+        }
+        // Check for end flag
+        else if (receivedChar == FLAG && frameLength > 0) {
+            frame[frameLength++] = receivedChar;
+            break; // End of frame, exit loop
+        }
+        // Check for escape character
+        else if (receivedChar == ESCAPE) {
+            unsigned char nextChar;
+            res = read(fd, &nextChar, 1);
+            if (res < 0) {
+                perror("Error reading from serial port");
+                return -1;
+            }
+            // De-stuffing: XOR next character with 0x20
+            frame[frameLength++] = nextChar ^ 0x20;
+        }
+        // Regular data or control characters
+        else {
+            frame[frameLength++] = receivedChar;
+        }
     }
-    return bcc2;
+
+    // Extract BCC2 value
+    receivedBCC2 = frame[frameLength - 2];
+
+    // Calculate BCC2 value
+    unsigned char calculatedBCC2 = 0;
+    for (int i = 1; i < frameLength - 2; i++) {
+        calculatedBCC2 ^= frame[i];
+    }
+
+    // Check BCC2 value
+    if (receivedBCC2 != calculatedBCC2) {
+        printf("BCC2 error: received 0x%02X, calculated 0x%02X\n", receivedBCC2, calculatedBCC2);
+        return -1;
+    }
+
+    // Copy data to output buffer
+    memcpy(buffer, frame + 4, frameLength - 6);
+
+    // Return number of characters read
+    return frameLength - 6;
 }
 
 int main() {
     int fd; // data link identifier
     struct termios oldtio, newtio;
-    unsigned char receivedFrame[255]; // Maximum possible size for received frame
-    int receivedLength = 0;
-    unsigned char destuffedFrame[255]; // Maximum possible size for destuffed frame
-    int destuffedLength = 0;
-    unsigned char bcc2;
+    char buffer[255]; // Buffer to store received data
 
     // Open the serial port
     fd = open("/dev/ttyS0", O_RDWR | O_NOCTTY);
@@ -61,45 +112,15 @@ int main() {
         return 1;
     }
 
-    // Read one byte at a time
-    unsigned char receivedByte;
-    while (read(fd, &receivedByte, 1) > 0) {
-        // Check for frame start
-        if (receivedByte == FLAG) {
-            receivedLength = 0;
-            destuffedLength = 0;
-        }
-
-        // Store received byte in received frame
-        receivedFrame[receivedLength++] = receivedByte;
-
-        // Perform de-stuffing
-        if (receivedByte == ESCAPE) {
-            if (read(fd, &receivedByte, 1) <= 0) {
-                perror("Error reading from serial port");
-                break;
-            }
-            receivedByte ^= 0x20;
-        }
-
-        // Check for frame end
-        if (receivedByte == FLAG) {
-            // Validate BCC2
-            bcc2 = receivedFrame[receivedLength - 2];
-            if (bcc2 == calculateBCC2(receivedFrame + 1, receivedLength - 4)) {
-                // BCC2 is correct, process the frame
-                // ...
-                // Perform further processing here
-                // ...
-                // Print the received frame
-                printf("Received Frame: ");
-                for (int i = 0; i < receivedLength; i++) {
-                    printf("%02X ", receivedFrame[i]);
-                }
-                printf("\n");
-            } else {
-                printf("BCC2 error: Expected 0x%02X, Received 0x%02X\n", calculateBCC2(receivedFrame + 1, receivedLength - 4), bcc2);
-            }
+    // Read from the serial port using llread
+    int bytesRead = llread(fd, buffer);
+    if (bytesRead < 0) {
+        printf("llread failed\n");
+    } else {
+        printf("llread succeeded: %d bytes received\n", bytesRead);
+        // Process the received data
+        for (int i = 0; i < bytesRead; i++) {
+            printf("Byte %d: 0x%02X\n", i, buffer[i]);
         }
     }
 
@@ -114,3 +135,4 @@ int main() {
 
     return 0;
 }
+

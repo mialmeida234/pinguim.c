@@ -51,3 +51,72 @@ int main(int argc, char *argv[]) {
     close(fd);
     return 0;
 }
+/*
+#include <unistd.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include "llopen.h"
+#include "llread.h"
+#include "llwrite.h"
+#include "llclose.h"
+
+int main(int argc, char *argv[]) {
+    if (argc != 2) {
+        printf("Usage: %s [TRANSMITTER | RECEIVER]\n", argv[0]);
+        return -1;
+    }
+
+    int fd;
+    if (strcmp(argv[1], "TRANSMITTER") == 0) {
+        fd = llopen(1, TRANSMITTER);
+        if (fd != -1) {
+            // Operations llwrite
+            char buffer[] = "HELLO WORLD";
+            int length = sizeof(buffer) - 1; // Exclude null terminator
+            int result = llwrite(fd, buffer, length);
+            if (result == -1) {
+                printf("[TEST]Error writing data\n");
+            }
+            printf("\n");
+            printf("[TEST]bytes escritos llwrite: %d\n", result);
+
+            // Close the connection
+            int close_result = llclose(fd);
+            if (close_result == -1) {
+                printf("[TEST]Error closing connection\n");
+            }
+        }
+    } else if (strcmp(argv[1], "RECEIVER") == 0) {
+        fd = llopen(2, RECEIVER);
+        if (fd != -1) {
+            // Perform llread operations
+            char buffer[256]; // Assuming maximum frame size of 256
+            int result = llread(fd, buffer);
+            if (result == -1) {
+                printf("[TEST]Error reading data\n");
+            } else {
+                printf("[TEST]Received data: %s\n", buffer);
+                printf("[TEST]bytes lidos llread: %d\n", result);
+            }
+
+            // Close the connection
+            int close_result = llclose(fd);
+            if (close_result == -1) {
+                printf("[TEST]Error closing connection\n");
+            }
+        }
+    } else {
+        printf("[TEST]Invalid argument: %s\n", argv[1]);
+        return -1;
+    }
+
+    if (fd == -1) {
+        printf("[TEST]Error establishing connection\n");
+        return -1;
+    }
+
+    close(fd);
+    return 0;
+}
+*/

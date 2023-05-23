@@ -11,6 +11,15 @@
 #define MAX_TRANSMISSIONS 3
 #define TIMEOUT_SECONDS 3
 
+typedef enum {
+    START,
+    FLAG_RCV,
+    A_RCV,
+    C_RCV,
+    BCC_OK,
+    STOP
+} State;
+
 int llopen(int port, int flag) {
     int fd;
     struct termios newtio;
@@ -30,7 +39,7 @@ int llopen(int port, int flag) {
 
     // Configure the serial port settings
     memset(&newtio, 0, sizeof(newtio));
-    newtio.c_cflag = B9600| CS8 | CLOCAL | CREAD;
+    newtio.c_cflag = B9600 | CS8 | CLOCAL | CREAD;
     newtio.c_iflag = IGNPAR;
     newtio.c_oflag = 0;
     newtio.c_lflag = 0;
@@ -40,84 +49,77 @@ int llopen(int port, int flag) {
     tcsetattr(fd, TCSANOW, &newtio);
 
     if (flag == TRANSMITTER) {
+        // Send SET frame to receiver
+        unsigned char set_frame[] = {0x5C, 0x01, 0x03, 0x02, 0x5C};
+        int bytes_written = write(fd, set_frame, sizeof(set_frame));
+
+        if (bytes_written != sizeof(set_frame)) {
+            printf("Error writing SET frame\n");
+            close(fd);
+            return -1;
+        }
+        printf("Wrote %d bits\n", bytes_written * 8);
+        printf("SET frame sent\n");
+
         // Transmitter state machine
-        typedef enum {
-            TRANSMITTER_START,
-            TRANSMITTER_SEND_SET,
-            TRANSMITTER_WAIT_UA,
-            TRANSMITTER_SUCCESS,
-            TRANSMITTER_ERROR
-        } TransmitterState;
-
-        TransmitterState state = TRANSMITTER_START;
-        int transmissions = 0;
+        State state = START;
+        int i = 0;
         int ua_received = 0;
-        int timer_expired = 0;
 
-        while (state != TRANSMITTER_SUCCESS && state != TRANSMITTER_ERROR) {
+        while (state != STOP && !ua_received) {
+            unsigned char received_frame;
+            int n = read(fd, &received_frame, sizeof(received_frame));
+
+            if (n == -1) {
+                printf("Error reading from serial port\n");
+                close(fd);
+                return -1;
+            } else if (n == 0) {
+                continue;
+            }
+
             switch (state) {
-                case TRANSMITTER_START:
-                    state = TRANSMITTER_SEND_SET;
+                case START:
+                    if (received_frame == 0x5C)
+                        state = FLAG_RCV;
                     break;
-                case TRANSMITTER_SEND_SET: {
-                    unsigned char set_frame[] = { 0x5C, 0x01, 0x03, 0x02, 0x5C };
-                    int bytes_written = write(fd, set_frame, sizeof(set_frame));
-
-                    if (bytes_written != sizeof(set_frame)) {
-                        printf("Error writing SET frame\n");
-                        state = TRANSMITTER_ERROR;
-                    } else {
-                        printf("Wrote %d bits\n", bytes_written * 8);
-                        printf("SET frame sent\n");
-                        state = TRANSMITTER_WAIT_UA;
-                    }
+                case FLAG_RCV:
+                    if (received_frame == 0x03)
+                        state = A_RCV;
+                    else if (received_frame != 0x5C)
+                        state = START;
                     break;
-                }
-                case TRANSMITTER_WAIT_UA: {
-                    // Start the timer
-                    alarm(TIMEOUT_SECONDS);
-
-                    // Wait for response from receiver
-                    unsigned char expected_ua_frame[] = { 0x5C, 0x03, 0x07, 0x04, 0x5C };
-                    unsigned char received_frame[5];
-                    int bytes_read = 0;
-
-                    while (bytes_read < sizeof(expected_ua_frame)) {
-                        int n = read(fd, &received_frame[bytes_read], sizeof(received_frame) - bytes_read);
-                        if (n == -1) {
-                            printf("Error reading from serial port\n");
-                            state = TRANSMITTER_ERROR;
-                            break;
-                        } else if (n == 0) {
-                            continue;
-                        } else {
-                            bytes_read += n;
-                        }
-                    }
-
-                    // Check if UA frame received
-                    if (memcmp(received_frame, expected_ua_frame, sizeof(expected_ua_frame)) == 0) {
+                case A_RCV:
+                    if (received_frame == 0x07)
+                        state = C_RCV;
+                    else if (received_frame == 0x5C)
+                        state = FLAG_RCV;
+                    else
+                        state = START;
+                    break;
+                case C_RCV:
+                    if (received_frame == (0x03 ^ 0x07))
+                        state = BCC_OK;
+                    else if (received_frame == 0x5C)
+                        state = FLAG_RCV;
+                    else
+                        state = START;
+                    break;
+                case BCC_OK:
+                    if (received_frame == 0x5C) {
+                        state = FLAG_RCV;
                         ua_received = 1;
-                        state = TRANSMITTER_SUCCESS;
                     } else {
-                        transmissions++;
-                        if (transmissions >= MAX_TRANSMISSIONS) {
-                            state = TRANSMITTER_ERROR;
-                        } else {
-                            state = TRANSMITTER_SEND_SET;
-                        }
+                        state = START;
                     }
-
-                    // Stop the timer
-                    alarm(0);
                     break;
-                }
                 default:
                     break;
             }
         }
 
-        if (state == TRANSMITTER_SUCCESS) {
+        if (ua_received) {
+            printf("UA frame received\n");
             printf("Connection established\n");
         } else {
             printf("Maximum transmissions reached or UA frame not received\n");
@@ -129,84 +131,76 @@ int llopen(int port, int flag) {
         return fd;
     } else if (flag == RECEIVER) {
         // Receiver state machine
-        typedef enum {
-            RECEIVER_START,
-            RECEIVER_WAIT_SET,
-            RECEIVER_SEND_UA,
-            RECEIVER_SUCCESS,
-            RECEIVER_ERROR
-        } ReceiverState;
+        State state = START;
+        int i = 0;
+        int set_received = 0;
 
-        ReceiverState state = RECEIVER_START;
-        unsigned char expected_set_frame[] = { 0x5C, 0x01, 0x03, 0x02, 0x5C };
-        unsigned char received_frame[5];
-        int bits_read = 0;
-        int bytes_read = 0;
+        while (state != STOP && !set_received) {
+            unsigned char received_frame;
+            int n = read(fd, &received_frame, sizeof(received_frame));
 
-        while (state != RECEIVER_SUCCESS && state != RECEIVER_ERROR) {
+            if (n == -1) {
+                printf("Error reading from serial port\n");
+                close(fd);
+                return -1;
+            } else if (n == 0) {
+                continue;
+            }
+
             switch (state) {
-                case RECEIVER_START:
-                    state = RECEIVER_WAIT_SET;
+                case START:
+                    if (received_frame == 0x5C)
+                        state = FLAG_RCV;
                     break;
-                case RECEIVER_WAIT_SET: {
-                    int n = read(fd, &received_frame[bytes_read], sizeof(received_frame) - bytes_read);
-                    if (n == -1) {
-                        printf("Error reading from serial port\n");
-                        state = RECEIVER_ERROR;
-                        break;
-                    } else if (n == 0) {
-                        continue;
+                case FLAG_RCV:
+                    if (received_frame == 0x01)
+                        state = A_RCV;
+                    else if (received_frame != 0x5C)
+                        state = START;
+                    break;
+                case A_RCV:
+                    if (received_frame == 0x03)
+                        state = C_RCV;
+                    else if (received_frame == 0x5C)
+                        state = FLAG_RCV;
+                    else
+                        state = START;
+                    break;
+                case C_RCV:
+                    if (received_frame == (0x01 ^ 0x03))
+                        state = BCC_OK;
+                    else if (received_frame == 0x5C)
+                        state = FLAG_RCV;
+                    else
+                        state = START;
+                    break;
+                case BCC_OK:
+                    if (received_frame == 0x5C) {
+                        state = FLAG_RCV;
+                        set_received = 1;
                     } else {
-                        bytes_read += n;
-                    }
-
-                    if (bytes_read == sizeof(expected_set_frame)) {
-                        state = RECEIVER_SEND_UA;
+                        state = START;
                     }
                     break;
-                }
-                case RECEIVER_SEND_UA: {
-                    for (int i = 0; i < bytes_read; i++) {
-                        unsigned char expected_byte = expected_set_frame[i];
-                        unsigned char received_byte = received_frame[i];
-
-                        for (int j = 0; j < 8; j++) {
-                            unsigned char expected_bit = (expected_byte >> (7 - j)) & 0x01;
-                            unsigned char received_bit = (received_byte >> (7 - j)) & 0x01;
-
-                            if (received_bit != expected_bit) {
-                                printf("Invalid SET frame received\n");
-                                state = RECEIVER_ERROR;
-                                break;
-                            }
-
-                            bits_read++;
-                        }
-                    }
-
-                    // Send UA frame to transmitter
-                    unsigned char ua_frame[] = { 0x5C, 0x03, 0x07, 0x04, 0x5C };
-                    int bits_written = write(fd, ua_frame, sizeof(ua_frame));
-
-                    if (bits_written != sizeof(ua_frame)) {
-                        printf("Error writing UA frame\n");
-                        state = RECEIVER_ERROR;
-                    } else {
-                        printf("Wrote %d bits\n", bits_written * 8);
-                        printf("UA frame sent\n");
-                        state = RECEIVER_SUCCESS;
-                    }
-                    break;
-                }
                 default:
                     break;
             }
         }
 
-        if (state == RECEIVER_SUCCESS) {
-            printf("Connection established\n");
+        if (set_received) {
+            // Send UA frame to transmitter
+            unsigned char ua_frame[] = {0x5C, 0x03, 0x07, 0x04, 0x5C};
+            int bytes_written = write(fd, ua_frame, sizeof(ua_frame));
+
+            if (bytes_written != sizeof(ua_frame)) {
+                printf("Error writing UA frame\n");
+                close(fd);
+                return -1;
+            }
+            printf("Wrote %d bits\n", bytes_written * 8);
+            printf("UA frame sent\n");
         } else {
-            printf("Error in SET frame reception or writing UA frame\n");
+            printf("Maximum transmissions reached or SET frame not received\n");
             close(fd);
             return -1;
         }
@@ -218,6 +212,4 @@ int llopen(int port, int flag) {
         return -1;
     }
 }
-
-
-
+ 

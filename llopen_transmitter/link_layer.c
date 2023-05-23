@@ -1,8 +1,3 @@
-//controls the port
-
-//finite-time machine
-
-
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -18,39 +13,39 @@ typedef enum {
 
 int main() {
     State state = START;
-    unsigned char set_frame[] = { 0x5A, 0x01, 0x83, 0x4A }; // Example SET frame
+    unsigned char set_frame[] = { 0x5C, 0x01, 0x03, 0x02, 0x5C }; // Example SET frame
     int i = 0;
 
     while (state != STOP) {
         switch (state) {
             case START:
-                if (set_frame[i] == 0x5A)
+                if (set_frame[i] == 0x5C)
                     state = FLAG_RCV;
                 break;
             case FLAG_RCV:
                 if (set_frame[i] == 0x01)
                     state = A_RCV;
-                else if (set_frame[i] != 0x5A)
+                else if (set_frame[i] != 0x5C)
                     state = START;
                 break;
             case A_RCV:
-                if (set_frame[i] == 0x83)
+                if (set_frame[i] == 0x03)
                     state = C_RCV;
-                else if (set_frame[i] == 0x5A)
+                else if (set_frame[i] == 0x5C)
                     state = FLAG_RCV;
                 else
                     state = START;
                 break;
             case C_RCV:
-                if (set_frame[i] == (0x01 ^ 0x83))
+                if (set_frame[i] == (0x01 ^ 0x03))
                     state = BCC_OK;
-                else if (set_frame[i] == 0x5A)
+                else if (set_frame[i] == 0x5C)
                     state = FLAG_RCV;
                 else
                     state = START;
                 break;
             case BCC_OK:
-                state = STOP;
+                state = (set_frame[i] == 0x5C) ? FLAG_RCV : START;
                 break;
             default:
                 break;
@@ -65,52 +60,43 @@ int main() {
         printf("Error in SET message reception.\n");
     }
 
-    return 0;
-}
-
-
-
-
-int main() {
-    State state = START;
+    state = START;
     unsigned char receivedByte;  // Simulated received byte
-    unsigned char expectedBytes[] = {0x9A, 0x0C, 0x71, 0x4A};  // Expected UA message
+    unsigned char expectedBytes[] = {0x5C, 0x03, 0x07, 0x04, 0x5C};  // Expected UA message
     int index = 0;
 
-    // Simulated reception loop (replace this with your actual reception logic)
     while (state != STOP) {
-        // Simulated received byte (replace this with your actual byte reading logic)
         receivedByte = expectedBytes[index];
 
         switch (state) {
             case START:
-                if (receivedByte == 0x9A)
+                if (receivedByte == 0x5C)
                     state = FLAG_RCV;
                 break;
             case FLAG_RCV:
-                if (receivedByte == 0x0C)
+                if (receivedByte == 0x03)
                     state = A_RCV;
-                else if (receivedByte != 0x9A)
+                else if (receivedByte != 0x5C)
                     state = START;
                 break;
             case A_RCV:
-                if (receivedByte == 0x71)
+                if (receivedByte == 0x07)
                     state = C_RCV;
-                else if (receivedByte == 0x9A)
+                else if (receivedByte == 0x5C)
                     state = FLAG_RCV;
                 else
                     state = START;
                 break;
             case C_RCV:
-                if (receivedByte == 0x4A)
+                if (receivedByte == 0x04)
                     state = BCC_OK;
-                else if (receivedByte == 0x9A)
+                else if (receivedByte == 0x5C)
                     state = FLAG_RCV;
                 else
                     state = START;
                 break;
             case BCC_OK:
-                state = (receivedByte == 0x9A) ? FLAG_RCV : START;
+                state = (receivedByte == 0x5C) ? FLAG_RCV : START;
                 break;
             default:
                 break;

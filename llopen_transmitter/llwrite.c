@@ -1,6 +1,6 @@
 #include <stdio.h>
 #include <unistd.h>
-
+#include "llwrite.h"
 int llwrite(int fd, char* buffer, int length) {
     // GERA NUMERO DE SEQUENCIA S DE ACORDO COM O NUMERO DE FRAMES ENVIADO
     static unsigned int sequenceNumber = 0;
@@ -28,9 +28,14 @@ int llwrite(int fd, char* buffer, int length) {
     int bytes_written = write(fd, frame, sizeof(frame));
 
     if (bytes_written == -1) {
-        printf("Error writing to data link\n");
+        printf("[WRITE]Error writing to data link\n");
         return -1;
     }
+    printf("[WRITE]Frame contents: ");
+    for (int i = 0; i < sizeof(frame); i++) {
+            printf("%02X ", frame[i]);
+        }
+    printf("\n");
 
     // Receção da mensagem RR ou REJ do RECEIVER
     unsigned char controlMessage[5];
@@ -41,12 +46,12 @@ int llwrite(int fd, char* buffer, int length) {
         int result = read(fd, controlMessage + bytes_read, bytes_expected - bytes_read);
 
         if (result == -1) {
-            printf("Error reading control message\n");
+            printf("[WRITE]Error reading control message\n");
             return -1;
         }
 
         if (result == 0) {
-            printf("End of file reached\n");
+            printf("[WRITE]End of file reached\n");
             return -1;
         }
 
@@ -54,49 +59,43 @@ int llwrite(int fd, char* buffer, int length) {
     }
 
     if (bytes_read != bytes_expected) {
-        printf("Invalid control message length\n");
+        printf("[WRITE]Invalid control message length\n");
         return -1;
     }
 // possivelmente alterar para os dois cadsos possiveis de rr e os dois casos de rej
-
+     
     if (controlMessage[0] == 0x05C && controlMessage[1] == 0x03 && controlMessage[4] == 0x05C) {
         unsigned char controlField = controlMessage[2];
         unsigned char receivedXOR = controlMessage[3];
-        unsigned char expectedXOR = frame[1] ^ frame[2];
+        unsigned char expectedXOR = controlMessage[1] ^ controlMessage[2];
+       
+        printf("[received xor] %02X ", controlMessage[3]);
+                    printf("\n");
+        printf("[expected xor] %02X ", expectedXOR);
+                    printf("\n");
 
         if (receivedXOR == expectedXOR) {
             if ((controlField & 0x01) == sequenceNumber) {
                 // RR received
                 sequenceNumber = (sequenceNumber + 1) % 2; // Increment the sequence number for the next frame
+                 printf("RR ");
                 return bytes_written - 8; // Exclui os delimitadores
             } else {
                 // REJ received
+                printf("REJ ");
                 return -1;
             }
         } else {
-            printf("Control message XOR error\n");
+            printf("[WRITE]Control message XOR error\n");
+             printf("[WRITE] else ");
             return -1;
         }
-         if (receivedXOR == expectedXOR) {
-             int expectedControlField = (sequenceNumber == 1) ? 0b00000001 : 0b00100001;
-
-             if (controlField == expectedControlField) {
-                 // RR received
-                sequenceNumber = (sequenceNumber + 1) % 2; // Increment the sequence number for the next frame
-                return bytes_written - 8; // Exclude the delimiters
-             } else {
-               // REJ received
-               return -1;
-               }
-        } else {
-           printf("Control message XOR error\n");
-           return -1;
-         }
-
         
     } else {
-        printf("Invalid control message format\n");
+        printf("[WRITE]Invalid control message format\n");
+        printf("[WRITE] 4º else ");
         return -1;
     }
+ printf("[WRITE] 4º if ");
 }
 
